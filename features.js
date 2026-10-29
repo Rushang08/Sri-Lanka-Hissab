@@ -39,3 +39,35 @@ function veryPersonalBreakdown(m){
  const entries=(data.personalPayments||[]).filter(e=>e.shares[m.name]>0);
  return `<details class="component-detail pool-detail" open><summary><span class="component-heading">Very personal expenses<small>Shared only by the people named on each bill</small></span><span class="component-amount">${money(m.personalShare||0)}<span class="component-chevron" aria-hidden="true">⌄</span></span></summary><div class="component-body">${entries.length?entries.map(e=>`<button type="button" class="component-entry" data-expense="${esc(e.id)}"><span>${esc(e.description)}<small>${esc(e.paidBy)} paid ${money(e.amount)} · ${esc(e.paymentMethod)}<br>Shared by ${esc(e.beneficiaries.join(', '))}</small></span><strong>${money(e.shares[m.name])}</strong></button>`).join(''):'<p class="component-explanation">You are excluded from these personal bills.</p>'}${line('Your very personal expense total',m.personalShare||0,'Included once in Other.','total')}${line('Very personal payments credited to you',m.personalPaid||0,'Included in your payment credits.')}<p class="component-explanation">The ₹3,400 Souf water bill is shared by Jinal, Rushang, Rushabh and Pankaj (₹850 each). Rushang’s ₹440 and ₹428 payments and Rushabh’s ₹440 payment are shared only by Rushabh, Rushang and Pankaj. Rushang’s ₹480 personal UPI payment is for Pankaj alone. Each payment remains a separate record. All amounts are INR.</p></div></details>`;
 }
+
+function splitCostGroups(m){
+ const round=n=>Math.round(n*100)/100, total=entries=>round(entries.reduce((s,e)=>s+e.share,0));
+ const item=e=>({...e,share:e.shares?e.shares[m.name]:e.id==='KANDY'?m.kandy:e.id==='FLIGHTS'?m.flight:e.id==='CASH'?m.cash:e.id==='S01'?m.suratiShare:round(e.amount/7)});
+ const byId=id=>item(data.general.find(e=>e.id===id));
+ const cafeIds=['SC03','SC06','SC10','SC13','SC15','SC18','SC21'];
+ const villas=['S02','S03','S04','S05','KANDY'].map(byId);
+ const cafes=data.scapia.filter(e=>cafeIds.includes(e.id)).map(item).filter(e=>e.share>0);
+ const transport=[...['S06','S07'].map(byId),...data.homeCabs.map(item),...data.additionalPayments.filter(e=>e.category==='PickMe').map(item)].filter(e=>e.share>0);
+ const cash=[byId('CASH'),...data.additionalPayments.filter(e=>e.category==='Extra cash').map(item)];
+ const personal=(data.personalPayments||[]).map(item).filter(e=>e.share>0);
+ const other=[byId('S08'),...data.scapia.filter(e=>!cafeIds.includes(e.id)).map(item).filter(e=>e.share>0)];
+ const generalDisplay=data.general.filter(e=>/^S\d+$/.test(e.id)).map(item);
+ const rounding=round(m.generalShare-total(generalDisplay));
+ const pool=data.pooled.map(item).filter(e=>e.share>0);
+ return [
+ {key:'flight',label:'Flight',icon:'plane',amount:m.flight,note:'₹35,500 for your own ticket',entries:[byId('FLIGHTS')]},
+ {key:'cash',label:'Cash & extra exchange',icon:'cash',amount:total(cash),note:'₹15,000 each + '+money(data.extraCashTotal)+' extra cash divided among all 7 adults',entries:cash},
+ {key:'surati',label:'Surati food',icon:'food',amount:m.suratiShare,note:'₹31,388 divided among all 7 adults',entries:[byId('S01')]},
+ {key:'villas',label:'Villa stays',icon:'house',amount:total(villas),note:'₹76,081 divided among all 7 + your Kandy room allocation',entries:villas},
+ {key:'cafes',label:'Cafés & restaurants',icon:'food',amount:total(cafes),note:'Your share of '+cafes.length+' café / restaurant bills · open for each bill’s split',entries:cafes},
+ {key:'transport',label:'Cabs & transport',icon:'car',amount:total(transport),note:'Airport, home and PickMe cabs · shared by each bill’s named users',entries:transport},
+ {key:'personal',label:'Very personal expenses',icon:'person',amount:total(personal),note:personal.length?'Only your named bills; others are excluded':'You are excluded from these personal bills',entries:personal},
+ {key:'other',label:'Other purchases',icon:'list',amount:round(total(other)+rounding),note:'Dmart, SIM, Sigiriya Rock, drinks and other purchases used by you',entries:other,rounding},
+ {key:'pool',label:m.poolNet>0?'Pooled cash credit':'Pooled cash adjustment',icon:'cash',amount:round(-m.poolNet),note:money(m.poolUse)+' personal use − '+money(m.poolEqual)+' equal contributor credit',entries:pool,pool:true}
+ ];
+}
+function splitBillRow(e){
+ const rule=e.id==='KANDY'?'₹17,465 total · your personal room / upgrade allocation':e.id==='FLIGHTS'?'₹2,48,500 for 7 tickets · your ticket ₹35,500':e.id==='CASH'?'₹1,05,000 total ÷ 7 adults':e.beneficiaries.length===1?money(e.amount)+' · '+e.beneficiaries[0]+' only':money(e.amount)+' ÷ '+e.beneficiaries.length+' adults';
+ return `<button type="button" class="split-bill" data-expense="${esc(e.id)}"><span><strong>${esc(e.description)}</strong><small>${esc(rule)}${e.lkr?' · LKR '+e.lkr.toLocaleString('en-IN'):''}</small><small>${e.beneficiaries.length===7?'All 7 adults':esc(e.beneficiaries.join(', '))} · Paid by ${esc(e.paidBy)}</small></span><span class="split-bill-share">${money(e.share)}<small>Your share ↗</small></span></button>`;
+}
+function splitCostGroup(group,m){return `<details class="cost-group" data-cost-group="${group.key}"><summary><span class="cost-group-icon">${ico(group.icon)}</span><span class="cost-group-title">${esc(group.label)}<small>${esc(group.note)}</small></span><span class="cost-group-amount ${group.amount<0?'receive':''}">${money(group.amount)}<small>Details ⌄</small></span></summary><div class="cost-group-body">${group.entries.length?group.entries.map(splitBillRow).join(''):'<p class="component-explanation">No expenses in this category are allocated to you.</p>'}${group.rounding?line('General split rounding',group.rounding,'Keeps the displayed bill shares aligned with the original general allocation.'):''}${group.pool?`${line('Personal pooled use',m.poolUse)}${line('Less: equal contributor credit',-m.poolEqual,money(data.pooledTotalINR)+' of personal drawings ÷ 7, rounded to paise')}<p class="component-explanation">This adjusts cash already counted above. It adds no new trip expense.</p>`:''}${line('Your '+group.label.toLowerCase()+' total',group.amount,'Already included in your trip expense.','total')}</div></details>`;}
